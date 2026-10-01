@@ -22,9 +22,18 @@ except ImportError:  # polynomial fit still works with numpy only
 # ----------------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------------
-BROKER_HOST = "localhost"
-BROKER_PORT = 1883
-MQTT_TOPIC = "test/topic"
+
+
+def get_setting(name, default):
+    try:
+        return st.secrets.get(name, os.getenv(name, default))
+    except FileNotFoundError:
+        return os.getenv(name, default)
+
+
+BROKER_HOST = get_setting("BROKER_HOST", "localhost")
+BROKER_PORT = int(get_setting("BROKER_PORT", 1883))
+MQTT_TOPIC = get_setting("MQTT_TOPIC", "test/topic")
 DB_PATH = "local.db"
 TABLE_NAME = "equipment_data"
 
