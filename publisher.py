@@ -44,11 +44,13 @@ def main():
     try:
         while True:
             payload = {
-                "message_id": counter,
+                "equipment_id": "MOTOR-01",
                 "timestamp": datetime.now().isoformat(),
-                "sensor": "temperature_sensor_01",
-                "value": round(20.0 + (counter % 10) * 0.5, 2),
-                "unit": "°C"
+                "temperature": round(62 + (counter % 8) * 1.2, 2),
+                "vibration": round(2 + (counter % 6) * 0.25, 2),
+                "current": round(12 + (counter % 5) * 0.4, 2),
+                "rpm": 1450 + (counter % 7) * 4,
+                "pressure": round(3.1 + (counter % 5) * 0.08, 2),
             }
             payload_str = json.dumps(payload)
             print(f"\n[Publishing] {payload_str}")

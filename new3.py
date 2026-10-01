@@ -1,5 +1,17 @@
 import sqlite3
+import json
+import time
+
 import pandas as pd
+import paho.mqtt.client as mqtt
+import plotly.express as px
+import streamlit as st
+from streamlit_autorefresh import st_autorefresh
+
+
+BROKER_HOST = "localhost"
+BROKER_PORT = 1883
+MQTT_TOPIC = "test/topic"
 
 
 def get_connection():
@@ -71,15 +83,135 @@ def get_equipment_data(equipment_id):
     connection.close()
 
     return df
-import streamlit as st
-import plotly.express as px
 
 
+def save_mqtt_reading(payload):
+    required_fields = {
+        "equipment_id",
+        "timestamp",
+        "temperature",
+        "vibration",
+        "current",
+        "rpm",
+        "pressure",
+    }
+    if not required_fields.issubset(payload):
+        return
+
+    temperature = float(payload["temperature"])
+    vibration = float(payload["vibration"])
+    current = float(payload["current"])
+    rpm = float(payload["rpm"])
+    pressure = float(payload["pressure"])
+    health_score = payload.get("health_score")
+
+    if health_score is None:
+        health_score = max(
+            0,
+            min(
+                100,
+                100
+                - max(0, temperature - 75) * 2
+                - vibration * 3
+                - max(0, current - 40)
+                - abs(rpm - 1500) / 20
+                - abs(pressure - 3.5) * 5,
+            ),
+        )
+
+    health_score = float(health_score)
+    if health_score >= 90:
+        status = "NORMAL"
+    elif health_score >= 70:
+        status = "GOOD"
+    elif health_score >= 50:
+        status = "WARNING"
+    elif health_score >= 30:
+        status = "CRITICAL"
+    else:
+        status = "SEVERE"
+
+    connection = get_connection()
+    initialize_database(connection)
+    connection.execute(
+        """
+        INSERT INTO equipment_data
+        (equipment_id, timestamp, temperature, vibration, current,
+         rpm, pressure, health_score, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            payload["equipment_id"],
+            payload["timestamp"],
+            temperature,
+            vibration,
+            current,
+            rpm,
+            pressure,
+            health_score,
+            status,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+
+def on_mqtt_connect(client, userdata, flags, reason_code, properties=None):
+    if reason_code == 0:
+        print(f"[+] Connected to Mosquitto broker at {BROKER_HOST}:{BROKER_PORT}")
+        client.subscribe(MQTT_TOPIC)
+        print(f"[*] Subscribed to topic: '{MQTT_TOPIC}'")
+    else:
+        print(f"[-] MQTT connection failed with reason code: {reason_code}")
+
+
+def on_mqtt_message(client, userdata, message):
+    payload = message.payload.decode("utf-8")
+    try:
+        payload = json.loads(payload)
+    except json.JSONDecodeError:
+        pass
+
+    if isinstance(payload, dict):
+        save_mqtt_reading(payload)
+    print(f"[Message Received] Topic: '{message.topic}' | Payload: {payload}")
+
+
+@st.cache_resource
+def connect_mqtt():
+    """Connect to the local broker and return the running MQTT client."""
+    client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    client.on_connect = on_mqtt_connect
+    client.on_message = on_mqtt_message
+    client.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
+    client.loop_start()
+    return client
+
+
+if __name__ == "__main__" and not st.runtime.exists():
+    try:
+        mqtt_client = connect_mqtt()
+        print("[*] Waiting for MQTT messages. Press Ctrl+C to stop.")
+        while True:
+            time.sleep(1)
+    except ConnectionRefusedError:
+        print("[!] MQTT connection refused. Start Mosquitto with: mosquitto -c mosquitto.conf -v")
+    except KeyboardInterrupt:
+        print("\n[*] Stopping MQTT subscriber...")
+    finally:
+        if "mqtt_client" in locals():
+            mqtt_client.loop_stop()
+            mqtt_client.disconnect()
 st.set_page_config(
     page_title="Equipment Health Monitor",
     page_icon="🏭",
     layout="wide"
 )
+
+st_autorefresh(interval=3000, key="mqtt_refresh")
+
+if st.runtime.exists():
+    connect_mqtt()
 
 st.title("🏭 Industrial Equipment Health Monitor")
 
